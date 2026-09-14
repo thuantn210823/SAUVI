@@ -1,0 +1,22 @@
+{
+    "judge_model": "gpt-4o-2024-11-20",
+    "temperature": 0.0,
+    "top_p": 0.9,
+    "max_tokens": 1024,
+    "results": {
+        "audio_filepath1": {
+            "Explaination": "Blablabla",
+            "Judgement": "incorrect",
+            "instruction": "Người nói trong đoạn âm thanh thuộc vùng giọng nào? (a) Nam (b) Bắc (c) Trung",
+            "response": "xxxxxxxxxxx",
+            "label": "(b) Bắc"
+        },
+        "audio_filepath2": {
+            "Explaination": "Blablabla",
+            "Judgement": "correct",
+            "instruction": "Người nói trong đoạn âm thanh thuộc vùng giọng nào? (a) Nam (b) Bắc (c) Trung",
+            "response": "xxxxxxxxxxx",
+            "label": "(b) Bắc"
+        }
+    }
+}
