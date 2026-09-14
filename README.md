@@ -1,4 +1,4 @@
-# LALM Benchmark
+# SAUVI
 
 Evaluation pipeline for Large Audio Language Models (LALMs) on multiple-choice audio question answering.
 
