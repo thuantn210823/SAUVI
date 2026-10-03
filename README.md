@@ -1,6 +1,55 @@
-# SAUVI
+# SAUVI: An In-depth Vietnamese Spoken Language Understanding and Reasoning Benchmark
 
-Evaluation pipeline for Large Audio Language Models (LALMs) on multiple-choice audio question answering.
+<p align="center">
+  <img src="images/SAUVI.png" width="33%">
+</p>
+
+SAUVI is a benchmark for evaluating Large Audio Language Models (LALMs) on
+**Vietnamese spoken language understanding and reasoning**. It spans speech and
+music perception, reasoning over spoken content, Vietnamese-specific phenomena
+(dialects, reduplication, kinship pronouns, code-switching, ...), and more.
+
+> **Paper status:** SAUVI has been submitted to **ICASSP 2027**. The full
+> benchmark will be released if the paper is accepted.
+
+This repository provides the evaluation pipeline and a small sample
+(`data/testmini.jsonl`) for development and debugging.
+
+## Sample Data
+
+| File | Content |
+|---|---|
+| `data/testmini.jsonl` | 135 multiple-choice items |
+| `data/audio/speech/` | Speech clips (`.wav`) |
+| `data/audio/music/` | Music clips (`.wav`) |
+
+The sample covers **27 sub-tasks** across `speech` and `music` tasks, split into
+`perception` and `reasoning` categories, and `general` vs `vietnamese-specific`
+types.
+
+Each line is one JSON object:
+
+```json
+{
+  "id": "speech-vdi-000001",
+  "audio_id": "audio/speech/audio_ebc41f40fde941530071.wav",
+  "question": "Người nói trong đoạn audio sử dụng giọng vùng nào?",
+  "choices": ["bắc", "nam", "trung"],
+  "answer": "bắc",
+  "dataset": "ViMD",
+  "task": "speech",
+  "split": "test",
+  "type": "vietnamese-specific",
+  "category": "perception",
+  "sub-category": "vietnamese dialect identification",
+  "difficulty": "easy"
+}
+```
+
+> ⚠️ **Running the sample:** `audio_id` paths are relative, and `run_lalm.py`
+> resolves them against the current working directory. Run the pipeline from
+> inside `data/` so `audio/speech/...` resolves correctly, e.g.
+> `cd data && python ../run_lalm.py --manifest testmini.jsonl ...`.
 
 ## Project Structure
 
@@ -11,10 +60,14 @@ Benchmark/
 ├── toy_judge_server.py         # Mock judge server for testing (port 8903)
 ├── call.sh                     # Manual curl example
 ├── serve_instruct.sh           # Launch vLLM server (port 8901)
+├── data/
+│   ├── testmini.jsonl          # Sample manifest
+│   └── audio/                  # Sample audio (speech/, music/)
+├── images/
+│   └── SAUVI.png               # Mascot
 ├── evaluation/
-│   ├── llm_judge.py            # Stage 2: judge responses with LLM
-│   ├── calculate_acc.py        # Stage 3: compute accuracy
-│   └── README.md
+│   ├── llm_judge.py            # Stage 2: judge responses with an LLM
+│   └── calculate_acc.py        # Stage 3: compute accuracy
 ├── utils/
 │   └── common.py               # Shared JSONL loader
 ├── requirements.txt
@@ -32,9 +85,9 @@ pip install -r requirements.txt
 ```
 [0] Start LALM server
          │
-[1] run_lalm.py              ──> <model_name>.jsonl
+[1] run_lalm.py                 ──> <model_name>.jsonl
          │
-[2] evaluation/llm_judge.py  ──> <model_name>_judgements.jsonl
+[2] evaluation/llm_judge.py     ──> <model_name>_judgements.jsonl
          │
 [3] evaluation/calculate_acc.py ──> accuracy
 ```
@@ -59,76 +112,78 @@ python toy_llm_server.py --port 8902
 ### Stage 1: Run the LALM
 
 Query the model for each item in a JSONL manifest. Builds an instruction string
-(`question + (a) choice_a (b) choice_b ...` with shuffled option order), sends it
-to the model via OpenAI-compatible API, and writes enriched output.
+(`question? (a) choice_a (b) choice_b ...`, with shuffled option order), sends it
+to the model via an OpenAI-compatible API, and writes enriched output.
 
 ```bash
-# With real model
-python run_lalm.py \
-  --manifest mmau-test-mini.jsonl \
+# With the real model (run from data/ so relative audio paths resolve)
+cd data
+python ../run_lalm.py \
+  --manifest testmini.jsonl \
   --endpoint http://127.0.0.1:8901/v1/chat/completions \
   --model Qwen3-Omni-30B-A3B-Instruct \
   --threads 8 \
   --output Qwen3-Omni-30B-A3B-Instruct.jsonl
 
-# With toy server (for debugging)
-python run_lalm.py \
-  --manifest mmau-test-mini.jsonl \
+# With the toy server (for debugging)
+python ../run_lalm.py \
+  --manifest testmini.jsonl \
   --endpoint http://127.0.0.1:8902/v1/chat/completions \
   --model toy-model \
   --threads 8
 ```
 
-**Output format** (JSONL, one item per line):
+**Output format** (JSONL, one item per line — original fields plus
+`instruction`, `label`, `response`):
 
 ```json
 {
-  "id": "...",
-  "question": "Based on the given audio, identify the source of the speaking voice.",
-  "choices": ["Man", "Woman", "Child", "Robot"],
-  "answer": "Man",
-  "audio_id": "./test-mini-audios/xxx.wav",
-  "instruction": "Based on the given audio, identify the source of the speaking voice? (a) Robot (b) Woman (c) Man (d) Child",
-  "label": "(c) Man",
-  "response": "The answer is (c) Man."
+  "id": "speech-vdi-000001",
+  "audio_id": "audio/speech/audio_ebc41f40fde941530071.wav",
+  "question": "Người nói trong đoạn audio sử dụng giọng vùng nào?",
+  "choices": ["bắc", "nam", "trung"],
+  "answer": "bắc",
+  "instruction": "Người nói trong đoạn audio sử dụng giọng vùng nào? (a) trung (b) bắc (c) nam",
+  "label": "(b) bắc",
+  "response": "The answer is (b) bắc."
 }
 ```
 
 ### Stage 2: Judge Responses
 
-Send each item to an LLM judge (GPT-4o or a local model) to determine if the
+Send each item to an LLM judge (GPT-4o or a local model) to decide whether the
 response is correct. Adds `Explanation` and `Judgement` keys to each item.
 
 ```bash
-# With real OpenAI
+# With real OpenAI (run from the repo root)
 python evaluation/llm_judge.py \
-  -i Qwen3-Omni-30B-A3B-Instruct.jsonl \
+  -i data/Qwen3-Omni-30B-A3B-Instruct.jsonl \
   -o results/ \
   --api_key YOUR_OPENAI_API_KEY
 
-# With toy judge server (for debugging)
+# With the toy judge server (for debugging)
 python evaluation/llm_judge.py \
-  -i Qwen3-Omni-30B-A3B-Instruct.jsonl \
+  -i data/Qwen3-Omni-30B-A3B-Instruct.jsonl \
   -o results/ \
   --api_key dummy \
   --base_url http://127.0.0.1:8903/v1 \
   --judge_model dummy
 ```
 
-**Output format** (JSONL, same fields + Explanation/Judgement):
+**Output format** (JSONL, same fields plus `Explanation`/`Judgement`):
 
 ```json
 {
   "instruction": "...",
-  "response": "...",
-  "label": "(c) Man",
-  "Explanation": "The model chose (c) Man which matches the ground truth (c).",
+  "response": "The answer is (b) bắc.",
+  "label": "(b) bắc",
+  "Explanation": "The model chose (b) bắc which matches the ground truth (b) bắc.",
   "Judgement": "correct"
 }
 ```
 
 If the judge fails to parse the response, `Explanation` and `Judgement` are set
-to `null`. These items need manual verification.
+to `null`. These items require manual verification.
 
 ### Stage 3: Calculate Accuracy
 
@@ -137,6 +192,7 @@ python evaluation/calculate_acc.py -i results/Qwen3-Omni-30B-A3B-Instruct_judgem
 ```
 
 Output:
+
 ```
 Correct count: 750
 Incorrect count: 230
@@ -147,7 +203,8 @@ Accuracy: 76.53%
 
 ## Toy Servers for Debugging
 
-Two mock servers let you test the full pipeline without a real model or OpenAI API key.
+Two mock servers let you test the full pipeline without a real model or an
+OpenAI API key.
 
 ### Toy LLM Server (port 8902)
 
@@ -159,8 +216,8 @@ python toy_llm_server.py --port 8902
 
 ### Toy Judge Server (port 8903)
 
-Extracts the ground truth letter and model response letter, compares them, and
-returns `correct`/`incorrect` with an explanation.
+Extracts the ground-truth letter and the model-response letter, compares them,
+and returns `correct`/`incorrect` with an explanation.
 
 ```bash
 python toy_judge_server.py --port 8903
@@ -177,32 +234,20 @@ python toy_llm_server.py --port 8902
 # Terminal 2: toy judge
 python toy_judge_server.py --port 8903
 
-# Terminal 3: run pipeline
-python run_lalm.py \
-  --manifest mmau-test-mini.jsonl \
+# Terminal 3: run the pipeline on the SAUVI sample
+cd data
+python ../run_lalm.py \
+  --manifest testmini.jsonl \
   --endpoint http://127.0.0.1:8902/v1/chat/completions \
   --model toy-model
 
-python evaluation/llm_judge.py \
+python ../evaluation/llm_judge.py \
   -i toy-model.jsonl \
-  -o results/ \
+  -o ../results/ \
   --api_key dummy \
   --base_url http://127.0.0.1:8903/v1
 
-python evaluation/calculate_acc.py -i results/toy-model_judgements.jsonl
-```
-
-## Standalone Pipeline (run_lalm_benchmark.py)
-
-Alternative script for manifests with **dict-choice** schema (e.g.
-`regional_dialect_recognition.jsonl` where `choices` is `{"A": "Nam", "B": "Trung", ...}`).
-Does inline answer parsing and accuracy computation without a separate judge.
-
-```bash
-python run_lalm_benchmark.py \
-  --manifest regional_dialect_recognition.jsonl \
-  --endpoint http://127.0.0.1:8901/v1/chat/completions \
-  --threads 8
+python ../evaluation/calculate_acc.py -i ../results/toy-model_judgements.jsonl
 ```
 
 ## CLI Reference
@@ -220,6 +265,9 @@ python run_lalm_benchmark.py \
 | `--retries` | `2` | Retries with exponential backoff |
 | `--output` | `<model_name>.jsonl` | Output JSONL path |
 
+> Tip: the `--manifest` default is a legacy path. Always pass
+> `--manifest data/testmini.jsonl` (or `testmini.jsonl` when running from `data/`).
+
 ### evaluation/llm_judge.py
 
 | Flag | Default | Description |
@@ -228,42 +276,56 @@ python run_lalm_benchmark.py \
 | `--output_dir` / `-o` | (required) | Output directory |
 | `--api_key` | `$OPENAI_API_KEY` | OpenAI API key |
 | `--judge_model` | `gpt-4o-2024-11-20` | Judge model name |
-| `--base_url` | `None` (real OpenAI) | Base URL for OpenAI-compatible API |
+| `--base_url` | `None` (real OpenAI) | Base URL for an OpenAI-compatible API |
 | `--output_name` | `<stem>_judgements.jsonl` | Output filename |
 
 ### evaluation/calculate_acc.py
 
 | Flag | Default | Description |
 |---|---|---|
-| `--input` / `-i` | (required) | Input JSONL with `Judgement` field |
+| `--input` / `-i` | (required) | Input JSONL with a `Judgement` field |
 
 ## Data Format
 
-### Manifest Schema (MMAU)
+### SAUVI Manifest Schema
 
 JSONL, one object per line:
 
 ```json
 {
-  "id": "3fe64f3d-...",
-  "audio_id": "./test-mini-audios/3fe64f3d-....wav",
-  "question": "Based on the given audio, identify the source of the speaking voice.",
-  "choices": ["Man", "Woman", "Child", "Robot"],
-  "answer": "Man",
-  "dataset": "AudioSet",
-  "task": "sound",
-  "split": "test-mini",
-  "category": "Reasoning",
-  "sub-category": "Acoustic Source Inference",
-  "difficulty": "medium"
+  "id": "speech-vdi-000001",
+  "audio_id": "audio/speech/audio_ebc41f40fde941530071.wav",
+  "question": "Người nói trong đoạn audio sử dụng giọng vùng nào?",
+  "choices": ["bắc", "nam", "trung"],
+  "answer": "bắc",
+  "dataset": "ViMD",
+  "task": "speech",
+  "split": "test",
+  "type": "vietnamese-specific",
+  "category": "perception",
+  "sub-category": "vietnamese dialect identification",
+  "difficulty": "easy"
 }
 ```
 
-- `choices`: list of strings (option text)
-- `answer`: string matching one of `choices`
-- `audio_id`: path to audio file (resolved relative to CWD)
+| Field | Description |
+|---|---|
+| `id` | Unique item identifier |
+| `audio_id` | Path to the audio file (relative to the working directory) |
+| `question` | Vietnamese question text |
+| `choices` | List of option texts |
+| `answer` | The correct option (matches one entry in `choices`) |
+| `dataset` | Source dataset name |
+| `task` | `speech` or `music` |
+| `split` | Dataset split (e.g. `test`, `music-test`) |
+| `type` | `general` or `vietnamese-specific` |
+| `category` | `perception` or `reasoning` |
+| `sub-category` | Fine-grained task (e.g. `vietnamese dialect identification`) |
+| `difficulty` | `easy`, `medium`, or `hard` |
 
 ### Audio Paths
 
 `run_lalm.py` converts audio paths to `file://` URLs. Absolute paths are used
-as-is. Relative paths are resolved against the current working directory.
+as-is; relative paths are resolved against the current working directory. Because
+the SAUVI sample uses paths like `audio/speech/...`, run the pipeline from
+inside `data/` (or rewrite `audio_id` to an absolute path).
